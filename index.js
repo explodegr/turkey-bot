@@ -10,6 +10,7 @@ app.get('/', (req, res) => {
 app.listen(PORT, () => {
   console.log(`Web server running on port ${PORT}`);
 });
+
 const { Client, GatewayIntentBits, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
 
 const client = new Client({
@@ -31,6 +32,8 @@ client.on('interactionCreate', async (interaction) => {
 
   // HELP
   if (interaction.commandName === 'help') {
+    await interaction.deferReply();
+
     const embed = new EmbedBuilder()
       .setColor(Math.floor(Math.random() * 0xffffff))
       .setTitle('🦃 Turkey Bot Commands')
@@ -39,19 +42,19 @@ client.on('interactionCreate', async (interaction) => {
         {
           name: '⚙️ Utility',
           value: `
-/ping → Check bot status  
-/userinfo → Get user info  
-/avatar → Show avatar  
-/serverinfo → Server stats  
+/ping → Check bot status
+/userinfo → Get user info
+/avatar → Show avatar
+/serverinfo → Server stats
 /help → This menu
           `
         },
         {
           name: '🛡️ Moderation',
           value: `
-/kick → Kick a member  
-/ban → Ban a member  
-/timeout → Timeout a member  
+/kick → Kick a member
+/ban → Ban a member
+/timeout → Timeout a member
 /untimeout → Remove timeout
           `
         }
@@ -59,21 +62,25 @@ client.on('interactionCreate', async (interaction) => {
       .setFooter({ text: 'Turkey Bot' })
       .setTimestamp();
 
-    return interaction.reply({ embeds: [embed] });
+    return interaction.editReply({ embeds: [embed] });
   }
 
   // PING
   if (interaction.commandName === 'ping') {
+    await interaction.deferReply();
+
     const embed = new EmbedBuilder()
       .setColor(Math.floor(Math.random() * 0xffffff))
       .setTitle('🏓 Pong!')
       .setTimestamp();
 
-    return interaction.reply({ embeds: [embed] });
+    return interaction.editReply({ embeds: [embed] });
   }
 
   // USERINFO
   if (interaction.commandName === 'userinfo') {
+    await interaction.deferReply();
+
     const target = interaction.options.getUser('user') || interaction.user;
     const member = await interaction.guild.members.fetch(target.id);
 
@@ -111,11 +118,13 @@ client.on('interactionCreate', async (interaction) => {
       .setFooter({ text: 'Turkey Bot' })
       .setTimestamp();
 
-    return interaction.reply({ embeds: [embed] });
+    return interaction.editReply({ embeds: [embed] });
   }
 
   // AVATAR
   if (interaction.commandName === 'avatar') {
+    await interaction.deferReply();
+
     const target = interaction.options.getUser('user') || interaction.user;
 
     const embed = new EmbedBuilder()
@@ -124,11 +133,13 @@ client.on('interactionCreate', async (interaction) => {
       .setImage(target.displayAvatarURL({ size: 1024 }))
       .setTimestamp();
 
-    return interaction.reply({ embeds: [embed] });
+    return interaction.editReply({ embeds: [embed] });
   }
 
-  // SERVER INFO (FULL)
+  // SERVER INFO
   if (interaction.commandName === 'serverinfo') {
+    await interaction.deferReply();
+
     const guild = interaction.guild;
 
     await guild.members.fetch();
@@ -168,107 +179,111 @@ client.on('interactionCreate', async (interaction) => {
       .setFooter({ text: 'Turkey Bot' })
       .setTimestamp();
 
-    return interaction.reply({ embeds: [embed] });
+    return interaction.editReply({ embeds: [embed] });
   }
 
   // KICK
   if (interaction.commandName === 'kick') {
+    await interaction.deferReply({ flags: 64 });
+
     try {
       const target = interaction.options.getMember('user');
       const reason = interaction.options.getString('reason') || 'No reason';
 
       if (!interaction.member.permissions.has(PermissionFlagsBits.KickMembers)) {
-        return interaction.reply({ content: 'No permission', flags: 64 });
+        return interaction.editReply({ content: 'No permission' });
       }
 
       if (!target || !target.kickable) {
-        return interaction.reply({ content: 'Cannot kick this user', flags: 64 });
+        return interaction.editReply({ content: 'Cannot kick this user' });
       }
 
       await target.kick(reason);
-      return interaction.reply(`👢 Kicked ${target.user.tag}`);
+      return interaction.editReply({ content: `👢 Kicked ${target.user.tag}` });
     } catch (error) {
       console.error('Kick error:', error);
-      return interaction.reply({
-        content: 'I could not kick that user. Check my role position and permissions.',
-        flags: 64
+      return interaction.editReply({
+        content: 'I could not kick that user. Check my role position and permissions.'
       });
     }
   }
 
   // BAN
   if (interaction.commandName === 'ban') {
+    await interaction.deferReply({ flags: 64 });
+
     try {
       const user = interaction.options.getUser('user');
       const targetMember = interaction.guild.members.cache.get(user.id);
       const reason = interaction.options.getString('reason') || 'No reason';
 
       if (!interaction.member.permissions.has(PermissionFlagsBits.BanMembers)) {
-        return interaction.reply({ content: 'No permission', flags: 64 });
+        return interaction.editReply({ content: 'No permission' });
       }
 
       if (targetMember && !targetMember.bannable) {
-        return interaction.reply({ content: 'Cannot ban this user', flags: 64 });
+        return interaction.editReply({ content: 'Cannot ban this user' });
       }
 
       await interaction.guild.members.ban(user.id, { reason });
-      return interaction.reply(`🔨 Banned ${user.tag}`);
+      return interaction.editReply({ content: `🔨 Banned ${user.tag}` });
     } catch (error) {
       console.error('Ban error:', error);
-      return interaction.reply({
-        content: 'I could not ban that user. Check my role position and permissions.',
-        flags: 64
+      return interaction.editReply({
+        content: 'I could not ban that user. Check my role position and permissions.'
       });
     }
   }
 
   // TIMEOUT
   if (interaction.commandName === 'timeout') {
+    await interaction.deferReply({ flags: 64 });
+
     try {
       const target = interaction.options.getMember('user');
       const minutes = interaction.options.getInteger('minutes');
       const reason = interaction.options.getString('reason') || 'No reason';
 
       if (!interaction.member.permissions.has(PermissionFlagsBits.ModerateMembers)) {
-        return interaction.reply({ content: 'No permission', flags: 64 });
+        return interaction.editReply({ content: 'No permission' });
       }
 
       if (!target || !target.moderatable) {
-        return interaction.reply({ content: 'Cannot timeout this user', flags: 64 });
+        return interaction.editReply({ content: 'Cannot timeout this user' });
       }
 
       await target.timeout(minutes * 60 * 1000, reason);
-      return interaction.reply(`⏳ Timed out ${target.user.tag} for ${minutes}m`);
+      return interaction.editReply({ content: `⏳ Timed out ${target.user.tag} for ${minutes}m` });
     } catch (error) {
       console.error('Timeout error:', error);
-      return interaction.reply({
-        content: 'I could not timeout that user. Check my role position and permissions.',
-        flags: 64
+      return interaction.editReply({
+        content: 'I could not timeout that user. Check my role position and permissions.'
       });
     }
   }
 
   // UNTIMEOUT
   if (interaction.commandName === 'untimeout') {
+    await interaction.deferReply({ flags: 64 });
+
     try {
       const target = interaction.options.getMember('user');
       const reason = interaction.options.getString('reason') || 'No reason';
 
       if (!interaction.member.permissions.has(PermissionFlagsBits.ModerateMembers)) {
-        return interaction.reply({ content: 'No permission', flags: 64 });
+        return interaction.editReply({ content: 'No permission' });
       }
 
       if (!target || !target.moderatable) {
-        return interaction.reply({ content: 'Cannot remove timeout from this user', flags: 64 });
+        return interaction.editReply({ content: 'Cannot remove timeout from this user' });
       }
 
       await target.timeout(null, reason);
-      return interaction.reply(`✅ Removed timeout from ${target.user.tag}`);
+      return interaction.editReply({ content: `✅ Removed timeout from ${target.user.tag}` });
     } catch (error) {
       console.error('Untimeout error:', error);
-      return interaction.reply({
-        content: 'I could not remove the timeout from that user. Check my role position and permissions.',
-        flags: 64
+      return interaction.editReply({
+        content: 'I could not remove the timeout from that user. Check my role position and permissions.'
       });
     }
   }
