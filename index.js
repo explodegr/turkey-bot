@@ -33,13 +33,6 @@ const client = new Client({
 });
 
 const ratingsFile = path.join(__dirname, 'ratings.json');
-
-/*
-  Tracks who already clicked on a specific rating panel message.
-  This means:
-  - one click per user per panel
-  - if they want to change their vote later, they must run /rate again
-*/
 const panelVotes = new Map();
 
 function ensureRatingsFile() {
@@ -88,14 +81,35 @@ function getUserRatingStats(targetId) {
   };
 }
 
+function getExistingRating(targetId, raterId) {
+  const ratings = loadRatings();
+  return ratings[targetId]?.[raterId] ?? null;
+}
+
 function buildStarsDisplay(average) {
   if (average <= 0) return '☆☆☆☆☆';
   const rounded = Math.round(average);
   return '⭐'.repeat(rounded) + '☆'.repeat(5 - rounded);
 }
 
-function buildRateEmbed(targetUser) {
+function buildRateEmbed(targetUser, viewerId = null) {
   const stats = getUserRatingStats(targetUser.id);
+  const existingRating = viewerId ? getExistingRating(targetUser.id, viewerId) : null;
+
+  const fields = [
+    { name: 'Member', value: `<@${targetUser.id}>`, inline: true },
+    { name: 'Average Rating', value: `${stats.average.toFixed(1)} / 5`, inline: true },
+    { name: 'Total Ratings', value: `${stats.total}`, inline: true },
+    { name: 'Stars', value: buildStarsDisplay(stats.average) }
+  ];
+
+  if (existingRating !== null) {
+    fields.push({
+      name: 'Your Current Rating',
+      value: `${existingRating}⭐`,
+      inline: true
+    });
+  }
 
   return new EmbedBuilder()
     .setColor(Math.floor(Math.random() * 0xffffff))
@@ -105,13 +119,8 @@ function buildRateEmbed(targetUser) {
       iconURL: targetUser.displayAvatarURL()
     })
     .setThumbnail(targetUser.displayAvatarURL({ size: 1024 }))
-    .addFields(
-      { name: 'Member', value: `<@${targetUser.id}>`, inline: true },
-      { name: 'Average Rating', value: `${stats.average.toFixed(1)} / 5`, inline: true },
-      { name: 'Total Ratings', value: `${stats.total}`, inline: true },
-      { name: 'Stars', value: buildStarsDisplay(stats.average) }
-    )
-    .setFooter({ text: 'Click a button below to rate this member' })
+    .addFields(fields)
+    .setFooter({ text: 'Each person counts as one rating total. Running /rate again updates your old rating.' })
     .setTimestamp();
 }
 
@@ -156,13 +165,11 @@ function cleanupPanelVotes() {
 client.once('ready', () => {
   ensureRatingsFile();
   console.log(`Logged in as ${client.user.tag}`);
-
   setInterval(cleanupPanelVotes, 1000 * 60 * 30);
 });
 
 client.on('interactionCreate', async (interaction) => {
   try {
-    // BUTTONS
     if (interaction.isButton()) {
       if (!interaction.customId.startsWith('rate_')) return;
 
@@ -213,7 +220,7 @@ client.on('interactionCreate', async (interaction) => {
 
       if (panelData.users.has(userId)) {
         return interaction.reply({
-          content: 'You already used this rating panel. Run `/rate` again if you want to change your rating.',
+          content: 'You already used this rating panel. Run `/rate` again if you want to update your one saved rating.',
           flags: 64
         });
       }
@@ -224,14 +231,13 @@ client.on('interactionCreate', async (interaction) => {
         ratings[targetId] = {};
       }
 
-      // This replaces the old rating from the same user,
-      // so each user only counts as ONE rating total.
+      const oldRating = ratings[targetId][userId] ?? null;
       ratings[targetId][userId] = ratingValue;
       saveRatings(ratings);
 
       panelData.users.add(userId);
 
-      const updatedEmbed = buildRateEmbed(targetUser);
+      const updatedEmbed = buildRateEmbed(targetUser, userId);
       const row = buildRateButtons(targetId);
 
       await interaction.update({
@@ -239,16 +245,18 @@ client.on('interactionCreate', async (interaction) => {
         components: [row]
       });
 
+      const changeText = oldRating === null
+        ? `You rated **${targetUser.tag}** ${ratingValue}⭐.`
+        : `You updated your rating for **${targetUser.tag}** from ${oldRating}⭐ to ${ratingValue}⭐.`;
+
       return interaction.followUp({
-        content: `You rated **${targetUser.tag}** ${ratingValue}⭐. If you want to change it later, run \`/rate\` again.`,
+        content: `${changeText} Each person only counts as **one** rating total.`,
         flags: 64
       });
     }
 
-    // SLASH COMMANDS
     if (!interaction.isChatInputCommand()) return;
 
-    // HELP
     if (interaction.commandName === 'help') {
       await interaction.deferReply();
 
@@ -256,26 +264,23 @@ client.on('interactionCreate', async (interaction) => {
         .setColor(Math.floor(Math.random() * 0xffffff))
         .setTitle('🦃 Turkey Bot Commands')
         .setDescription('Here are all available commands:')
-        .addFields(
-          {
-            name: '⚙️ Utility',
-            value: `
+        .addFields({
+          name: '⚙️ Utility',
+          value: `
 /ping → Check bot status
 /userinfo → Get user info
 /avatar → Show avatar
 /serverinfo → Server stats
 /help → This menu
 /rate → Rate a server member
-            `
-          }
-        )
+          `
+        })
         .setFooter({ text: 'Turkey Bot' })
         .setTimestamp();
 
       return interaction.editReply({ embeds: [embed] });
     }
 
-    // PING
     if (interaction.commandName === 'ping') {
       await interaction.deferReply();
 
@@ -287,7 +292,6 @@ client.on('interactionCreate', async (interaction) => {
       return interaction.editReply({ embeds: [embed] });
     }
 
-    // USERINFO
     if (interaction.commandName === 'userinfo') {
       await interaction.deferReply();
 
@@ -331,7 +335,6 @@ client.on('interactionCreate', async (interaction) => {
       return interaction.editReply({ embeds: [embed] });
     }
 
-    // AVATAR
     if (interaction.commandName === 'avatar') {
       await interaction.deferReply();
 
@@ -346,7 +349,6 @@ client.on('interactionCreate', async (interaction) => {
       return interaction.editReply({ embeds: [embed] });
     }
 
-    // SERVER INFO
     if (interaction.commandName === 'serverinfo') {
       await interaction.deferReply();
 
@@ -372,18 +374,14 @@ client.on('interactionCreate', async (interaction) => {
           { name: 'Server Name', value: guild.name, inline: true },
           { name: 'Server ID', value: guild.id, inline: true },
           { name: 'Owner', value: `<@${owner.id}>`, inline: true },
-
           { name: 'Members', value: `${guild.memberCount}`, inline: true },
           { name: 'Online', value: `${online}`, inline: true },
           { name: 'Idle', value: `${idle}`, inline: true },
           { name: 'DND', value: `${dnd}`, inline: true },
-
           { name: 'Boosts', value: `${boosts}`, inline: true },
           { name: 'Boost Level', value: `Level ${boostTier}`, inline: true },
-
           { name: 'Channels', value: `${channelCount}`, inline: true },
           { name: 'Roles', value: `${roleCount}`, inline: true },
-
           { name: 'Created', value: `<t:${Math.floor(guild.createdTimestamp / 1000)}:F>` }
         )
         .setFooter({ text: 'Turkey Bot' })
@@ -392,7 +390,6 @@ client.on('interactionCreate', async (interaction) => {
       return interaction.editReply({ embeds: [embed] });
     }
 
-    // RATE
     if (interaction.commandName === 'rate') {
       await interaction.deferReply();
 
@@ -410,7 +407,7 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.editReply({ content: 'You cannot rate yourself.' });
       }
 
-      const embed = buildRateEmbed(target);
+      const embed = buildRateEmbed(target, interaction.user.id);
       const row = buildRateButtons(target.id);
 
       return interaction.editReply({
