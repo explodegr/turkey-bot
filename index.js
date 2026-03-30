@@ -34,6 +34,14 @@ const client = new Client({
 
 const ratingsFile = path.join(__dirname, 'ratings.json');
 
+/*
+  Tracks who already clicked on a specific rating panel message.
+  This means:
+  - one click per user per panel
+  - if they want to change their vote later, they must run /rate again
+*/
+const panelVotes = new Map();
+
 function ensureRatingsFile() {
   if (!fs.existsSync(ratingsFile)) {
     fs.writeFileSync(ratingsFile, JSON.stringify({}, null, 2));
@@ -136,9 +144,20 @@ function buildRateButtons(targetId) {
   );
 }
 
+function cleanupPanelVotes() {
+  const now = Date.now();
+  for (const [messageId, data] of panelVotes.entries()) {
+    if (now - data.createdAt > 1000 * 60 * 60 * 6) {
+      panelVotes.delete(messageId);
+    }
+  }
+}
+
 client.once('ready', () => {
   ensureRatingsFile();
   console.log(`Logged in as ${client.user.tag}`);
+
+  setInterval(cleanupPanelVotes, 1000 * 60 * 30);
 });
 
 client.on('interactionCreate', async (interaction) => {
@@ -150,6 +169,8 @@ client.on('interactionCreate', async (interaction) => {
       const parts = interaction.customId.split('_');
       const targetId = parts[1];
       const ratingValue = parseInt(parts[2], 10);
+      const panelMessageId = interaction.message.id;
+      const userId = interaction.user.id;
 
       if (!targetId || !ratingValue || ratingValue < 1 || ratingValue > 5) {
         return interaction.reply({
@@ -158,7 +179,7 @@ client.on('interactionCreate', async (interaction) => {
         });
       }
 
-      if (interaction.user.id === targetId) {
+      if (userId === targetId) {
         return interaction.reply({
           content: 'You cannot rate yourself.',
           flags: 64
@@ -181,14 +202,34 @@ client.on('interactionCreate', async (interaction) => {
         });
       }
 
+      if (!panelVotes.has(panelMessageId)) {
+        panelVotes.set(panelMessageId, {
+          createdAt: Date.now(),
+          users: new Set()
+        });
+      }
+
+      const panelData = panelVotes.get(panelMessageId);
+
+      if (panelData.users.has(userId)) {
+        return interaction.reply({
+          content: 'You already used this rating panel. Run `/rate` again if you want to change your rating.',
+          flags: 64
+        });
+      }
+
       const ratings = loadRatings();
 
       if (!ratings[targetId]) {
         ratings[targetId] = {};
       }
 
-      ratings[targetId][interaction.user.id] = ratingValue;
+      // This replaces the old rating from the same user,
+      // so each user only counts as ONE rating total.
+      ratings[targetId][userId] = ratingValue;
       saveRatings(ratings);
+
+      panelData.users.add(userId);
 
       const updatedEmbed = buildRateEmbed(targetUser);
       const row = buildRateButtons(targetId);
@@ -199,7 +240,7 @@ client.on('interactionCreate', async (interaction) => {
       });
 
       return interaction.followUp({
-        content: `You rated **${targetUser.tag}** ${ratingValue}⭐`,
+        content: `You rated **${targetUser.tag}** ${ratingValue}⭐. If you want to change it later, run \`/rate\` again.`,
         flags: 64
       });
     }
