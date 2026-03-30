@@ -33,7 +33,13 @@ const client = new Client({
 });
 
 const ratingsFile = path.join(__dirname, 'ratings.json');
-const panelVotes = new Map();
+
+/*
+  panelSessions tracks each /rate message:
+  - who opened that panel
+  - who already clicked on that panel
+*/
+const panelSessions = new Map();
 
 function ensureRatingsFile() {
   if (!fs.existsSync(ratingsFile)) {
@@ -43,6 +49,7 @@ function ensureRatingsFile() {
 
 function loadRatings() {
   ensureRatingsFile();
+
   try {
     const data = fs.readFileSync(ratingsFile, 'utf8');
     return JSON.parse(data || '{}');
@@ -86,10 +93,26 @@ function getExistingRating(targetId, raterId) {
   return ratings[targetId]?.[raterId] ?? null;
 }
 
+/*
+  Full star = ⭐
+  Half star = ✮
+  Empty star = ☆
+
+  Examples:
+  2.0 => ⭐⭐☆☆☆
+  2.5 => ⭐⭐✮☆☆
+  3.0 => ⭐⭐⭐☆☆
+  4.5 => ⭐⭐⭐⭐✮
+*/
 function buildStarsDisplay(average) {
   if (average <= 0) return '☆☆☆☆☆';
-  const rounded = Math.round(average);
-  return '⭐'.repeat(rounded) + '☆'.repeat(5 - rounded);
+
+  const roundedToHalf = Math.round(average * 2) / 2;
+  const fullStars = Math.floor(roundedToHalf);
+  const hasHalfStar = roundedToHalf % 1 !== 0;
+  const emptyStars = 5 - fullStars - (hasHalfStar ? 1 : 0);
+
+  return '⭐'.repeat(fullStars) + (hasHalfStar ? '✮' : '') + '☆'.repeat(emptyStars);
 }
 
 function buildRateEmbed(targetUser, viewerId = null) {
@@ -120,7 +143,7 @@ function buildRateEmbed(targetUser, viewerId = null) {
     })
     .setThumbnail(targetUser.displayAvatarURL({ size: 1024 }))
     .addFields(fields)
-    .setFooter({ text: 'Each person counts as one rating total. Running /rate again updates your old rating.' })
+    .setFooter({ text: 'Each person only counts as one rating total. Run /rate again to update your old rating.' })
     .setTimestamp();
 }
 
@@ -153,11 +176,12 @@ function buildRateButtons(targetId) {
   );
 }
 
-function cleanupPanelVotes() {
+function cleanupPanelSessions() {
   const now = Date.now();
-  for (const [messageId, data] of panelVotes.entries()) {
+
+  for (const [messageId, data] of panelSessions.entries()) {
     if (now - data.createdAt > 1000 * 60 * 60 * 6) {
-      panelVotes.delete(messageId);
+      panelSessions.delete(messageId);
     }
   }
 }
@@ -165,7 +189,8 @@ function cleanupPanelVotes() {
 client.once('ready', () => {
   ensureRatingsFile();
   console.log(`Logged in as ${client.user.tag}`);
-  setInterval(cleanupPanelVotes, 1000 * 60 * 30);
+
+  setInterval(cleanupPanelSessions, 1000 * 60 * 30);
 });
 
 client.on('interactionCreate', async (interaction) => {
@@ -209,18 +234,27 @@ client.on('interactionCreate', async (interaction) => {
         });
       }
 
-      if (!panelVotes.has(panelMessageId)) {
-        panelVotes.set(panelMessageId, {
-          createdAt: Date.now(),
-          users: new Set()
+      const panelData = panelSessions.get(panelMessageId);
+
+      if (!panelData) {
+        return interaction.reply({
+          content: 'This rating panel expired. Run `/rate` again.',
+          flags: 64
         });
       }
 
-      const panelData = panelVotes.get(panelMessageId);
-
-      if (panelData.users.has(userId)) {
+      // Only the person who opened this panel can use it
+      if (panelData.ownerId !== userId) {
         return interaction.reply({
-          content: 'You already used this rating panel. Run `/rate` again if you want to update your one saved rating.',
+          content: 'This rating panel belongs to someone else. Run `/rate` yourself to make your own rating panel.',
+          flags: 64
+        });
+      }
+
+      // The panel owner can only use this specific panel once
+      if (panelData.used) {
+        return interaction.reply({
+          content: 'You already used this rating panel. Run `/rate` again if you want to update your rating.',
           flags: 64
         });
       }
@@ -235,7 +269,7 @@ client.on('interactionCreate', async (interaction) => {
       ratings[targetId][userId] = ratingValue;
       saveRatings(ratings);
 
-      panelData.users.add(userId);
+      panelData.used = true;
 
       const updatedEmbed = buildRateEmbed(targetUser, userId);
       const row = buildRateButtons(targetId);
@@ -410,10 +444,19 @@ client.on('interactionCreate', async (interaction) => {
       const embed = buildRateEmbed(target, interaction.user.id);
       const row = buildRateButtons(target.id);
 
-      return interaction.editReply({
+      const reply = await interaction.editReply({
         embeds: [embed],
-        components: [row]
+        components: [row],
+        fetchReply: true
       });
+
+      panelSessions.set(reply.id, {
+        ownerId: interaction.user.id,
+        used: false,
+        createdAt: Date.now()
+      });
+
+      return;
     }
   } catch (error) {
     console.error('Interaction error:', error);
