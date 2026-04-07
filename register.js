@@ -50,6 +50,7 @@ const commands = [
         .setDescription('Annual gross income in USD')
         .setRequired(true)
         .setMinValue(0)
+        .setMaxValue(1000000000000)
     )
     .addStringOption(option =>
       option.setName('state')

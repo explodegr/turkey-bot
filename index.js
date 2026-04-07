@@ -190,6 +190,7 @@ function cleanupPanelSessions() {
 
 const TAX_YEAR = 2025;
 const FEDERAL_STANDARD_DEDUCTION_SINGLE_2025 = 15750;
+const MAX_TAX_INCOME = 1000000000000;
 
 const US_STATE_NAMES = {
   AK: 'Alaska',
@@ -617,8 +618,8 @@ client.on('interactionCreate', async (interaction) => {
       const income = interaction.options.getNumber('income');
       const stateCode = interaction.options.getString('state');
 
-      if (income === null || income < 0) {
-        return interaction.editReply({ content: 'Please enter a valid income.' });
+      if (income === null || income < 0 || income > MAX_TAX_INCOME) {
+        return interaction.editReply({ content: 'Please enter a valid income between $0 and $1,000,000,000,000.' });
       }
 
       if (!stateCode || STATE_TAX_RATES[stateCode] === undefined) {
