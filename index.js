@@ -186,6 +186,157 @@ function cleanupPanelSessions() {
   }
 }
 
+// ---------- TAX HELPERS ----------
+
+const TAX_YEAR = 2025;
+const FEDERAL_STANDARD_DEDUCTION_SINGLE_2025 = 15750;
+
+const US_STATE_NAMES = {
+  AK: 'Alaska',
+  AZ: 'Arizona',
+  CO: 'Colorado',
+  FL: 'Florida',
+  IL: 'Illinois',
+  IN: 'Indiana',
+  KY: 'Kentucky',
+  MA: 'Massachusetts',
+  MI: 'Michigan',
+  NV: 'Nevada',
+  NH: 'New Hampshire',
+  NC: 'North Carolina',
+  PA: 'Pennsylvania',
+  SD: 'South Dakota',
+  TN: 'Tennessee',
+  TX: 'Texas',
+  UT: 'Utah',
+  WA: 'Washington',
+  WY: 'Wyoming'
+};
+
+/*
+  Simple first version:
+  - no-tax states: 0%
+  - selected flat-tax states: flat percentage of simplified taxable income
+  - WA treated as 0 here for ordinary wage income
+*/
+const STATE_TAX_RATES = {
+  AK: 0,
+  FL: 0,
+  NV: 0,
+  NH: 0,
+  SD: 0,
+  TN: 0,
+  TX: 0,
+  WA: 0,
+  WY: 0,
+
+  AZ: 0.025,
+  CO: 0.044,
+  IL: 0.0495,
+  IN: 0.03,
+  KY: 0.04,
+  MA: 0.05,
+  MI: 0.0425,
+  NC: 0.0425,
+  PA: 0.0307,
+  UT: 0.045
+};
+
+const FEDERAL_BRACKETS_SINGLE_2025 = [
+  { upTo: 11925, rate: 0.10 },
+  { upTo: 48475, rate: 0.12 },
+  { upTo: 103350, rate: 0.22 },
+  { upTo: 197300, rate: 0.24 },
+  { upTo: 250525, rate: 0.32 },
+  { upTo: 626350, rate: 0.35 },
+  { upTo: Infinity, rate: 0.37 }
+];
+
+function formatMoney(amount) {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 2
+  }).format(amount);
+}
+
+function calculateBracketTax(taxableIncome, brackets) {
+  let tax = 0;
+  let previousLimit = 0;
+
+  for (const bracket of brackets) {
+    if (taxableIncome <= previousLimit) break;
+
+    const amountInBracket = Math.min(taxableIncome, bracket.upTo) - previousLimit;
+    tax += amountInBracket * bracket.rate;
+    previousLimit = bracket.upTo;
+  }
+
+  return tax;
+}
+
+function calculateFederalTaxSingle2025(grossIncome) {
+  const taxableIncome = Math.max(0, grossIncome - FEDERAL_STANDARD_DEDUCTION_SINGLE_2025);
+  const tax = calculateBracketTax(taxableIncome, FEDERAL_BRACKETS_SINGLE_2025);
+
+  return {
+    taxableIncome,
+    tax
+  };
+}
+
+function calculateSimpleStateTax(stateCode, grossIncome) {
+  const taxableIncome = Math.max(0, grossIncome - FEDERAL_STANDARD_DEDUCTION_SINGLE_2025);
+  const rate = STATE_TAX_RATES[stateCode];
+
+  if (rate === undefined) {
+    return null;
+  }
+
+  return {
+    taxableIncome,
+    rate,
+    tax: taxableIncome * rate
+  };
+}
+
+function buildTaxEmbed(income, stateCode) {
+  const federal = calculateFederalTaxSingle2025(income);
+  const state = calculateSimpleStateTax(stateCode, income);
+  const stateName = US_STATE_NAMES[stateCode] || stateCode;
+  const stateTax = state ? state.tax : 0;
+  const totalTax = federal.tax + stateTax;
+  const afterTaxIncome = income - totalTax;
+  const effectiveRate = income > 0 ? (totalTax / income) * 100 : 0;
+
+  return new EmbedBuilder()
+    .setColor(Math.floor(Math.random() * 0xffffff))
+    .setTitle('💵 US Tax Estimate')
+    .addFields(
+      { name: 'Income', value: formatMoney(income), inline: true },
+      { name: 'Country', value: 'United States', inline: true },
+      { name: 'State', value: stateName, inline: true },
+      { name: 'Federal Taxable Income', value: formatMoney(federal.taxableIncome), inline: true },
+      { name: 'Federal Tax', value: formatMoney(federal.tax), inline: true },
+      {
+        name: 'State Tax',
+        value: state
+          ? `${formatMoney(state.tax)} (${(state.rate * 100).toFixed(2)}%)`
+          : 'Not supported in this version',
+        inline: true
+      },
+      { name: 'Estimated Total Tax', value: formatMoney(totalTax), inline: true },
+      { name: 'Estimated After-Tax Income', value: formatMoney(afterTaxIncome), inline: true },
+      { name: 'Effective Tax Rate', value: `${effectiveRate.toFixed(2)}%`, inline: true }
+    )
+    .setFooter({
+      text: `Estimate only • Tax year ${TAX_YEAR} • Single filer • Standard deduction • Simplified state tax • No credits/local tax/FICA`
+    })
+    .setTimestamp();
+}
+
+// ---------- END TAX HELPERS ----------
+
 client.once('ready', () => {
   ensureRatingsFile();
   console.log(`Logged in as ${client.user.tag}`);
@@ -307,6 +458,7 @@ client.on('interactionCreate', async (interaction) => {
 /serverinfo → Server stats
 /help → This menu
 /rate → Rate a server member
+/tax → Estimate after-tax income (US)
           `
         })
         .setFooter({ text: 'Turkey Bot' })
@@ -457,6 +609,24 @@ client.on('interactionCreate', async (interaction) => {
       });
 
       return;
+    }
+
+    if (interaction.commandName === 'tax') {
+      await interaction.deferReply();
+
+      const income = interaction.options.getNumber('income');
+      const stateCode = interaction.options.getString('state');
+
+      if (income === null || income < 0) {
+        return interaction.editReply({ content: 'Please enter a valid income.' });
+      }
+
+      if (!stateCode || STATE_TAX_RATES[stateCode] === undefined) {
+        return interaction.editReply({ content: 'Please select a supported state.' });
+      }
+
+      const embed = buildTaxEmbed(income, stateCode);
+      return interaction.editReply({ embeds: [embed] });
     }
   } catch (error) {
     console.error('Interaction error:', error);
